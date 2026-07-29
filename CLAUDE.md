@@ -12,6 +12,15 @@
 - 環境與工具問題直接回答（venv、pip、pytest 指令等）
 - 我明確說「給我看範例」時才給 code
 
+## Module 驗收流程
+推進到下一個 Module 之前，一定要先驗收：
+
+1. 回去讀 CURRICULUM.md 裡該 Module 原本寫的驗收條件，逐條對照，明確講「過」或「沒過」
+2. 不要因為「看起來能跑」就放行，也不要自行放寬或跳過原本的條件
+3. 驗收通過後，視情況再用簡易問答釐清觀念，確認我不只是「弄到能動」而是真的懂
+4. 我答錯的地方要直接指出來並說明，不要因為結論剛好對就放過錯誤的推論過程
+5. 驗收通過後提醒我更新 PROGRESS.md 並 commit（commit message 我自己寫）
+
 ## 專案脈絡
 重建一個 Cyberbiz API 訂單擷取器，共 13 個 Module。
-目前進度見 PROGRESS.md。
+課綱與各 Module 驗收條件見 CURRICULUM.md，目前進度見 PROGRESS.md。

@@ -3,5 +3,8 @@ requires = ["hatchling >= 1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = 'cyberbiz-extract-practice'
-version = '2026.0.0'
+name = "cyberbiz-extract-practice"
+version = "2026.0.0"
+dependencies = [
+    "requests"
+]
