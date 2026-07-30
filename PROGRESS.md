@@ -2,11 +2,17 @@
 
 ## 目前：Module 2（HTTP Signature 手刻）
 
-進 Module 2 要注意的事：
-- 課綱指定用 `datetime` 產生時間戳，目前 Module 1 版本用的是 `time.strftime` + `time.gmtime`，要換掉
-- 要引進 `requests.Session`，並理解為什麼比每次 `requests.get()` 好
-- 驗收：把系統時間往前調 10 分鐘，請求要被拒絕，而且要能解釋為什麼
+Module 2 四個項目的狀態：
+- ✅ 讀文件確認簽章涵蓋欄位與順序（Module 1 已完成，整理在下方觀念）
+- ✅ `hmac` + `hashlib` + `base64` 產生簽章（Module 1 已完成）
+- ✅ 改用 `datetime` 產生時間戳：`email.utils.format_datetime(datetime.now(tz=timezone.utc), usegmt=True)`，已實際送出請求確認可正常運作，`import time` 已移除
+- ⬜ 引進 `requests.Session`（觀念已讀完，整理在下方，還沒動手改 code）
+
+還沒做：
+- 驗收：把系統時間往前調 10 分鐘，請求要被拒絕，而且要能解釋為什麼（解釋部分見下方「防重放攻擊」那節，但要實跑，不是背答案）
 - 延伸題：把簽章邏輯寫成 `requests.auth.AuthBase` 的子類別
+
+動手改 Session 前留的問題：`request_headers` 裡的 `X-Date` 和 `Authorization`，哪一個放進 `session.headers` 會出事？為什麼？
 
 ## 已完成
 - Module 0：建立 venv、src layout 專案結構、pyproject.toml（`[build-system]` 用 hatchling）、`pip install -e .` 成功、確認同一個 venv 下任何目錄都能 import
@@ -74,3 +80,42 @@
 - 解法要兩層：(1) x-date 被簽進 sig_str，攻擊者不能改時間（改了簽章對不上）；(2) 伺服器獨立拒絕太舊的時間戳，讓側錄下來的請求過幾分鐘就失效。缺一不可。
 - 常見誤解：以為「時間不對 → hash 算出來不一樣 → 驗證失敗」。**這是錯的**——因為 x_date 同時用在 sig_str 和 X-Date header，兩邊一致，伺服器重算後簽章會吻合。真正擋下來的是伺服器的時間新鮮度檢查。這也是為什麼 Module 2 的「調快 10 分鐘」驗收方式才有意義。
 - 同理，`time.gmtime()` 換成 `time.localtime()` 會失敗，不是因為簽章對不上，而是因為送出了一個標示為 GMT、實際快 8 小時（台灣 = GMT+8）的時間，超出伺服器容許窗口。
+
+---
+
+以下為 Module 2 學到的觀念。
+
+**HTTP 是文字，但送出去之前要先接通一條線路**
+- request / response 本質上就是一段有格式的文字（request-line、headers、body）。但在能送出這段文字之前，電腦必須先跟伺服器**接通一條連線**。這是原本完全沒概念的那一層。
+- 完整流程分四段，用打電話類比：
+  1. **撥號、對方接起、確認雙方聽得到** = TCP 三向交握。來回三個訊息，內容完全不含要傳的資料，純粹在確認「線通了，而且雙方都知道通了」。
+  2. **約定暗號，避免旁人聽懂** = TLS 交握，只有 `https` 才有。雙方交換資訊、算出一組只有彼此知道的金鑰。比第 1 段更貴，因為多了幾個來回再加上運算。
+  3. **開始講話** = HTTP request / response，也就是原本唯一有概念的那一段。
+  4. **掛電話** = 關閉連線。
+- 成本重點：第 1 + 2 段加起來，對一台在國外的伺服器可能吃掉一兩百毫秒，而這整段時間裡，一個 byte 的 HTTP 都還沒送出去。
+
+**HTTP/1.1 預設不掛線（keep-alive）**
+- 第 3 段結束（拿到 response）之後，連線**不一定要關掉**。HTTP/1.1 預設讓它繼續開著，於是通往同一台主機的下一個請求可以直接跳到第 3 段，省掉撥號和約暗號。
+- 這就是「連線值得重用」的全部理由。Module 3 要翻完所有分頁，假設 200 頁，不重用連線就是撥號 200 次，其中 199 次是純浪費——對象根本是同一台主機。
+
+**`requests.Session` 是 class，不是 method**
+- 命名慣例（PEP 8）：`CapWords` 大寫開頭是類別，`lower_case` 是函式 / 方法。所以 `requests.get` 是模組層級的**函式**，`requests.Session` 是**類別**，要先實例化成 `requests.Session()` 才能用。
+- 這個區別不是咬文嚼字，它是 Session 有用的根本原因：**類別的實例可以持有狀態**。函式呼叫完就消失，物件會繼續活著。
+
+**`requests.Session` 是純 client 端的物件，伺服器完全不知情**
+- 最重要的一句：**伺服器不知道我有一個 Session**。沒有 session ID，伺服器端沒有任何對應的東西存在。全程是單方面的、client 端的事。
+- 它就是一個自己這邊拿著的盒子，裡面放兩類東西：(1) **還開著的連線**（連線池）(2) 記住的**設定**（headers、auth、cookies）。
+- 所以「誰在負責記錄 / 打包出一個 session」的答案是：**我自己的 Python 程式，也就是 `requests` 這個函式庫**。
+- 盒子裡最值得重複使用的是**連線**，headers 只是順便。原本的理解「把可共用的東西暫時記起來」方向是對的，缺的是「最主要被記起來的其實是連線」。
+
+**Session 的開頭與結尾**
+- **開頭**：`requests.Session()` 這一行**沒有發生任何網路動作**，只是建了一個空盒子。連線是等到第一次真的送請求時才建立，然後被留在盒子裡。
+- **結尾**：`session.close()` 把盒子裡還開著的連線全部關掉。`with requests.Session() as s:` 的意思是「離開這個區塊時自動幫我 close」（`with` 本身的機制是 Module 7 的主題，現在當成「自動收尾」理解就夠）。
+- `requests.get()` 的內部實作（`requests/api.py`）本體只有兩行：`with sessions.Session() as session: return session.request(...)`。也就是**建盒子 → 用一次 → 關掉連線**。
+- 推論：**一直都在用 Session，只是每次都用完就丟。** `requests.get()` 不是「Session 的簡化替代品」，它是「一次性 Session 的包裝紙」。所以「引進 Session」實際上是**停止每次把它丟掉**。
+
+**兩個同名不同物的「session」**
+- **網站登入的 session**：這個**是**伺服器端的狀態。伺服器發一個 cookie 給你，記住「這是誰」。有明確的開始（登入）和結束（登出 / 過期）。
+- **`requests.Session`**：純 client 端，跟上面無關。
+- 兩者唯一的關聯：因為 `requests.Session` 會保存 cookies，所以它**有能力參與**前者，但它本身不是前者。
+- Cyberbiz API 用簽章認證、不用 cookie，所以這個專案完全不會碰到前者。「session」這個字的撞名是當初混淆的來源。
