@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from email import utils
 import hmac
 import hashlib
 import base64
 import requests
+from requests.auth import AuthBase
 
 username = 'apidemo'
 secret = b'apidemo' # 最前面的 b 的效果是把後面的字串轉成 bytes
@@ -19,7 +20,7 @@ url = url_base + url_path
 
 # x-date
 # 參考範例：'Tue, 10 Oct 2017 00:00:00 GMT'
-x_date = utils.format_datetime(datetime.now(tz=timezone.utc), usegmt=True)
+x_date = utils.format_datetime(datetime.now(tz=timezone.utc) - timedelta(seconds = 600), usegmt=True)
 print('===== x-date-datetime =====')
 print(x_date)
 
@@ -46,8 +47,38 @@ print('===== authorization =====')
 print(auth)
 print('==========')
 
+# Send HTTP GET request
 request_headers = {'X-Date': x_date, 'Authorization': auth}
-r = requests.get(url, headers=request_headers, params=payload)
-print('===== Done ' + http_method + ' =====')
+# r = requests.get(url, headers=request_headers, params=payload)
+# print('===== Done ' + http_method + ' =====')
+# print(r.text)
+# print('==========')
+
+
+# 用 Session 送 request
+s = requests.Session() # 建立一個 session 空物件
+# s.auth = auth # 把 session 的 auth 設定成現在的 auth 變數
+
+r = s.get(url, headers=request_headers, params=payload) # 在 session 物件中送出一個 get request
+print(r.status_code)
 print(r.text)
-print('==========')
+
+# 讓 Session 的 Auth 可以隨著每次 request 更改必要的值
+# 引入 AuthBase：可以在送出 request 前修改 request 的內容（看 __call__：輸入 r，回傳 r）
+# 要修改哪些內容，就會需要我們在專用的 CbzAuth 裡面指定
+# 延續 Session 的精神：可以共用的東西只呼叫一次，需要去回頭看 request 裡面有哪些東西是多次呼叫中一樣 & 不一樣的
+# 一樣的就放 __init__，不一樣的就放 __call__
+
+# 單次呼叫的標準內容：requests.get(url, headers=request_headers, params=payload)
+# auth = 'hmac username="' + username + '", algorithm="hmac-sha256", headers="' + headers + '", signature="' + sig + '"'
+# headers = 'x-date request-line'
+
+# class CbzAuth(AuthBase):
+#     def __init__(self, username):
+#         # 只放跟 auth 相關，且整個 session 中不會變的東西
+#        self.username = username,
+#        self.headers = headers
+
+#     def __call__(self, r):
+        
+#         return r

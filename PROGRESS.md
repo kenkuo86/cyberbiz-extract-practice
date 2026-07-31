@@ -21,6 +21,33 @@ Module 2 四個項目的狀態：
 ## 卡住的地方
 （尚無，Module 0 / 1 遇到的卡點都已解決，整理進下方觀念）
 
+## 環境操作備忘（venv）
+
+日常啟用（`.venv/` 已存在，Python 3.13）：
+
+```bash
+cd /Users/guoqian/Desktop/cyberbiz-extract-practice
+source .venv/bin/activate     # zsh / bash 都是這行
+which python                  # 驗證：應印出 .../cyberbiz-extract-practice/.venv/bin/python
+deactivate                    # 離開
+```
+
+重建（venv 壞掉或換機器才需要）：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+VS Code：`Cmd+Shift+P` → `Python: Select Interpreter` → 選 `.venv/bin/python`，之後 integrated terminal 會自動 activate。
+
+**activate 實際上只是在改環境變數**
+- shell 靠 `PATH`（一串資料夾路徑）由前往後找執行檔。打 `python` 時，找到的是 `PATH` 裡第一個叫 `python` 的。
+- `activate` 只做三件事：把 `.venv/bin` 插到 `PATH` 最前面、設 `VIRTUAL_ENV`、備份舊 `PATH` 給 `deactivate` 用。沒有啟動任何 process，沒有「環境被開啟」這回事。
+- 由此推出三件事：(1) 環境變數只活在那一個 shell process 裡，新開 terminal 就要重打；(2) 必須用 `source` 而不是直接執行 script，因為直接執行會開子 shell，改完隨子 shell 消失，改不到手上這個 shell；(3) 直接打 `.venv/bin/python` 與 activate 後打 `python` **完全等價**，activate 只是懶得打全路徑的捷徑。
+- 這也解釋了上面「editable install 是綁在特定 venv 上的」：`import` 找不找得到 package，取決於當下跑的是哪個直譯器。
+
 ## 已經懂了的觀念
 
 **distribution name vs import name 是兩個不同的東西**
