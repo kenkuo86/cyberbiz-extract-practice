@@ -1,25 +1,27 @@
 # 進度
 
-## 目前：Module 2（HTTP Signature 手刻）
+## 目前：Module 3（分頁與 generator）⭐
 
-Module 2 四個項目的狀態：
-- ✅ 讀文件確認簽章涵蓋欄位與順序（Module 1 已完成，整理在下方觀念）
-- ✅ `hmac` + `hashlib` + `base64` 產生簽章（Module 1 已完成）
-- ✅ 改用 `datetime` 產生時間戳：`email.utils.format_datetime(datetime.now(tz=timezone.utc), usegmt=True)`，已實際送出請求確認可正常運作，`import time` 已移除
-- ⬜ 引進 `requests.Session`（觀念已讀完，整理在下方，還沒動手改 code）
+尚未開始。CURRICULUM 標記的三個關鍵節點之一（3 generator / 5 decorator+exception / 7 context manager），建議放慢。
 
-還沒做：
-- 驗收：把系統時間往前調 10 分鐘，請求要被拒絕，而且要能解釋為什麼（解釋部分見下方「防重放攻擊」那節，但要實跑，不是背答案）
-- 延伸題：把簽章邏輯寫成 `requests.auth.AuthBase` 的子類別
-
-動手改 Session 前留的問題：`request_headers` 裡的 `X-Date` 和 `Authorization`，哪一個放進 `session.headers` 會出事？為什麼？
+要做的：Step A 先寫 list 版本，Step B 再寫 generator 版本，兩步都要寫不能跳。
 
 ## 已完成
 - Module 0：建立 venv、src layout 專案結構、pyproject.toml（`[build-system]` 用 hatchling）、`pip install -e .` 成功、確認同一個 venv 下任何目錄都能 import
 - Module 1：52 行的無結構 script，用 HMAC 簽章成功打到 `GET /v1/orders`，印出真實訂單資料。刻意保留的壞味道：secret 寫死、沒有函式、沒有錯誤處理、只抓第一頁
+- Module 2：四個項目全部完成 + 驗收通過 + 延伸題完成
+  - ✅ 讀文件確認簽章涵蓋欄位與順序
+  - ✅ `hmac` + `hashlib` + `base64` 產生簽章
+  - ✅ 改用 `datetime` 產生時間戳：`email.utils.format_datetime(datetime.now(tz=timezone.utc), usegmt=True)`，`import time` 已移除
+  - ✅ 引進 `requests.Session`
+  - ✅ **驗收通過**：時間提前 10 分鐘 → 401，時間正常 → 200（單一變因對照組）
+  - ✅ **延伸題完成**：簽章邏輯已改寫成 `requests.auth.AuthBase` 的子類別 `CbzAuth`，掛在 `session.auth` 上
 
 ## 卡住的地方
-（尚無，Module 0 / 1 遇到的卡點都已解決，整理進下方觀念）
+（尚無）
+
+## 未解的疑問
+- **為什麼含 query 和不含 query 的 request-line 兩種簽法都能通過？** 目前最合理的解釋是「伺服器不只用一種形式比對」，但這是推論不是實證。詳見下方「簽章實際涵蓋的範圍」。
 
 ## 環境操作備忘（venv）
 
@@ -96,9 +98,20 @@ VS Code：`Cmd+Shift+P` → `Python: Select Interpreter` → 選 `.venv/bin/pyth
 - `.digest()` 回傳原始 bytes（要接 base64 就用這個）；`.hexdigest()` 回傳同樣內容的 16 進位文字表示。
 - 判斷「哪些東西受簽章保護」的方法：**看 `msg` 是什麼**，保護範圍就是 msg 的範圍。
 
-**Cyberbiz 簽章實際涵蓋的範圍**
+**Cyberbiz 簽章實際涵蓋的範圍**（Module 2 實測後修正）
 - `sig_str = 'x-date: ' + x_date + '\n' + rline`，所以被簽的只有 **x-date 的值** 和 **request-line（method + path + protocol version）**。
-- **不包含 query string**（`page`、`per_page`、`offset` 都沒被簽），代表簽章對這些參數完全沒有保護力，中途被竄改伺服器也驗不出來。實務上主要靠 HTTPS/TLS 擋這種竄改，但那是另一層防護，不該跟簽章混為一談。
+- 原本寫「不包含 query string，所以簽章對 `page` / `per_page` / `offset` 沒有保護力」——**這句是從讀範例 code 推論來的，Module 2 實測後證明不能這樣斷言**，已修正如下。
+- **實測結果**（其他變因全部固定，只改簽章裡的 path）：
+
+  | 簽章裡的 request-line | 實際送出的 path | 結果 |
+  |---|---|---|
+  | `/v1/orders`（不含 query） | `/v1/orders?page=1&...` | 200 |
+  | `/v1/orders?page=1&per_page=1&offset=0` | `/v1/orders?page=1&...` | 200 |
+  | `/v1/products`（錯的 path） | `/v1/orders?page=1&...` | **401** |
+
+- **可以確定的事**：request-line **確實有被驗證**（第 3 列證明了，簽錯 path 就是不給過）。
+- **目前的推論（非實證）**：HMAC 比對是逐位元組全等，差一個字元結果就完全不同、沒有「接近」這回事。所以前兩列都過的唯一合理解釋是**伺服器不只用一種形式去重建 sig_str 比對**（例如兩種都試）。這只是最合理的解釋，還沒有證據。
+- **由此做的決定**：程式裡用 `r.path_url`（= path + query），理由是**讓簽的字串和實際送出的 request-line 字面一致**。既然兩種都能過，就選跟真實請求相符的那種；哪天 Cyberbiz 把驗證收嚴成嚴格相符，這個選擇才不會壞掉。
 - Authorization header 裡的 `username`、`algorithm`、`headers` 都是明文「說明書」，不是被簽的內容：告訴伺服器該用誰的 secret、什麼演算法、照哪些欄位什麼順序重組 sig_str。伺服器要先讀得懂 username 才知道拿哪把 secret 來驗，所以它不可能被簽在裡面。
 - 伺服器的驗證動作是：照說明書，用它收到的 X-Date header 和 request line **自己重建一份一樣的 sig_str**，重算 HMAC，再跟送來的 signature 比對。
 
@@ -146,3 +159,67 @@ VS Code：`Cmd+Shift+P` → `Python: Select Interpreter` → 選 `.venv/bin/pyth
 - **`requests.Session`**：純 client 端，跟上面無關。
 - 兩者唯一的關聯：因為 `requests.Session` 會保存 cookies，所以它**有能力參與**前者，但它本身不是前者。
 - Cyberbiz API 用簽章認證、不用 cookie，所以這個專案完全不會碰到前者。「session」這個字的撞名是當初混淆的來源。
+
+**`session.headers` 不是「不用重送」，是「幫你每次自動補上」**
+- 曾經誤以為：放進 `session.headers` 的東西代表之後的請求不必再送。**錯的**——HTTP 沒有「這個 header 上次送過了、這次省略」的機制，每個請求都會把所有 header 完整送出去。
+- 它真正的意思是：**requests 在每次送出前自動幫你補上去**，純粹 client 端省打字。wire 上的 bytes 跟每次手動傳 `headers=` 完全一樣。
+- 這件事其實可以從「伺服器不知道我有一個 Session」直接推出來：伺服器既然不知道 Session 存在，就不可能知道「上次那個 header 這次還算數」。
+
+**哪些 header 適合放 `session.headers`**
+- 判準不是「會不會變」，而是**這個 header 的值綁在什麼東西上**：
+  - 綁在「我是誰、我是什麼 client」→ 屬於整個 session（`User-Agent`、`Accept` 這類），適合放。
+  - 綁在「這一次請求本身」→ 不屬於 session，不能放。
+- `X-Date` 和 `Authorization` 都屬於後者，**兩個都不能放**：`X-Date` 的正確值取決於送出當下幾點，`Authorization` 的簽章又涵蓋 x-date 和 request-line。
+- 而且這個 bug 特別惡劣：如果兩個都凍住，簽章與 header 仍然互相一致，簽章比對**會過**，擋下你的是新鮮度檢查——所以**一開始好好的，跑久了才突然全掛**。Module 3 要翻幾十上百頁，正好是會踩到的場景。「一定會失敗」比「跑到一半才開始失敗」好查太多。
+- 另外，如果同一個 session 打不同 endpoint，凍住的 `Authorization` 還會有第二種失敗：request-line 變了但簽章沒變（已由上面第 3 列實測證實會 401）。
+
+**`AuthBase` 不是「用來產出 auth 字串」的東西**
+- 看它的形狀就知道：`__call__(self, r)` **收到整個請求物件、回傳整個請求物件**。如果它的職責只是產字串，簽章會長成 `def get_auth(self) -> str`。
+- 它真正的身分是：**一個在請求送出前拿到整個請求、可以任意修改它的 hook**。文件的原句是 "will be called before the request is dispatched and can **modify the request**"。
+- 名字叫 auth 只是因為最常見的用途是認證。而認證資訊要進到 HTTP 請求裡**只能透過 header**，所以「設定 header」不是範例的額外行為，那就是它唯一的工作方式（內建的 `HTTPBasicAuth` 也是這樣做）。
+- 由此推出：`X-Date` 也該由 `CbzAuth` 負責。更硬的理由是——**X-Date header 的值和 sig_str 裡的時間戳必須完全相同**，它們不是兩件獨立的事，是同一次計算的兩個產物。分散在兩個地方產生，就有機會漂開。
+- 犯過的錯：在 `__call__` 裡寫 `self.headers[...] = ...`。改 `self` 對即將送出的請求沒有任何影響，**要改的是參數 `r` 身上的 headers**。
+
+**`__init__` 和 `__call__` 的執行時機（這一輪最大的收穫）**
+- `__init__` 在 **`CbzAuth(...)` 那個括號被執行的當下**跑，一次。跟送不送請求、送幾次完全無關。
+- `__call__` 在**每次請求送出前**跑，送幾次就跑幾次。
+- 實測（在兩者各放一個 `print`，用同一個 session 送兩次請求）：`__init__` 印 1 次，`__call__` 印 2 次。而且 `PreparedRequest` 先印、`200` 後印，證實 `__call__` 確實在請求送出**之前**執行。
+- 曾經誤以為「`__init__` 是被第一個 `s.get()` 觸發的，之後被記住所以沒再跑」。結果同樣是「一次」，但原因完全不同。驗證方法：**把所有 `s.get()` 註解掉再跑一次，`__init__` 的 print 照樣會出現。**
+- 為什麼這個時機非搞清楚不可：`__init__` 執行的那一刻，它對「接下來會有什麼請求」**一無所知**——不知道要打哪個 path、送幾次、什麼時間送。所以任何取決於「這次請求」的東西（時間戳、method、path）在 `__init__` 裡根本**算不出來**，不是「算了會過期」而是當下沒有資訊可算。這就是 `x_date` 不能放 `__init__` 的真正理由。
+- 通則：`CbzAuth(...)` 和 `requests.Session()` 是同一回事，**括號一打物件就建好，沒有任何網路動作發生**。這不是 Session 的特性，是所有 class 的通則。
+
+**class 的職責切法**
+- `__init__` 放**建立物件時就能決定、之後不變**的（`username`、`secret`）；`__call__` 放**必須等到送出那一刻才能決定**的（`x_date`、`rline`）。
+- 要不要放進這個 class，判準**不是「共不共用」**。`url_base` 也是共用的，但它跟「怎麼認證」無關，塞進去這個 class 就開始管不屬於它的事了。判準是「**這個 class 完成它的職責需不需要它**」。
+- 需要的東西還要再分來源：外面傳進來（會換的，如帳號密碼）／從 `r` 身上拿（每次可能不同的，如 method、path）／寫死（永遠不變的常數）。
+
+**繼承框架的類別 = 不能決定自己怎麼被呼叫**
+- 犯過的錯：把 `__call__` 宣告成 `def __call__(self, r, http_method, url_path)`。**這個 method 不是自己呼叫的，是 requests 呼叫的**，而 requests 只會傳一個 `r`，多宣告的參數永遠不會有值 → `TypeError`。
+- 需要的資訊要從 `r` 身上拿，不能（也不該）從外面傳。這就是「繼承框架的類別」的感覺：**形狀是框架訂的，你只能照它給的形狀去接。**
+
+**`__call__` 讓實例可以被當成函式呼叫**
+- 一個 class 定義了 `__call__` 之後，它的**實例**可以用 `instance(...)` 的寫法呼叫，這會觸發 `__call__`。
+- 這解釋了之前查文件卡住的地方：文件說 auth 接受 "any callable"，而 `CbzAuth` 的實例因為有 `__call__`，**它就是一個 callable**。
+- 也解釋了 `session.auth` 和 `session.headers` 的本質差異：
+
+  | | 放進去的是 |
+  |---|---|
+  | `session.headers` | 一個**值**，requests 每次原封不動抄上去 |
+  | `session.auth` | 一個**會被呼叫的東西**，requests 每次呼叫它、拿它當下算出來的結果 |
+
+- 一個是名詞、一個是動詞。這就是「會過期的東西放 headers 會爆、放 auth 不會」的根本原因。
+- 要分清三種東西：`CbzAuth` 是類別（設計圖）、`CbzAuth(...)` 是實例（要交出去的）、呼叫它是 requests 內部做的事——**自己永遠不會去呼叫 `__call__`**。
+
+**文件沒寫的時候怎麼辦（`path_url` 為例）**
+- requests 官方 API 文件對 `PreparedRequest.path_url` 只有一句 "Build the path URL to use."，完全沒說它含不含 query string。
+- 兩條路：(1) **看原始碼**（`requests/models.py`，它是個 property，實作就是把 url 拆開取 path，有 query 就接在後面）；(2) **直接印出來看**——更快，而且是自己的一手證據。
+- 教訓：**「文件沒寫」不是死路。** 原始碼隨時可以看、值隨時可以印。這一輪就是因為忘了印出來，才對 `path_url` 到底是什麼猜了半天。
+- 順帶：`PreparedRequest` 上跟網址有關的只有 `r.url`（完整網址）和 `r.path_url`（path + query），**沒有「只有 path」的現成屬性**。真的需要的話得自己用標準庫 `urllib.parse` 的 `urlsplit` 切。
+
+**實驗方法：對照組與單一變因（這一輪反覆用到）**
+- 「跑出 401」或「跑出 200」**單獨看都不構成證據**。因為同一個 401 可能來自時間戳太舊、簽章對不上、或帳號錯——狀態碼不會告訴你是哪一個。
+- 要能歸因，必須：(1) **只改一個變因**；(2) **同時有成功組和失敗組**。時間戳驗收之所以成立，是因為「時間正常 → 200」和「提前 10 分鐘 → 401」其他完全一樣。
+- 第一次做的時候只印了 `status_code` 沒印 `r.text`，等於丟掉伺服器給的最直接線索（實際訊息是 `HMAC signature cannot be verified, a valid date or x-date header is required for HMAC Authentication`）。
+- **「拿到 200」不等於「我的理解是對的」**。query string 那題就是活生生的例子：兩種完全不同的簽法都拿到 200，代表當時的實驗設計根本分不出真假。要製造一個**明確該失敗**的情況（故意簽錯 path），才問得出答案。
+- 犯過的推論錯誤：從 401 的錯誤訊息推論「新鮮度檢查是在驗算 HMAC **之後**才做的」。**這個從外部證不出來**——「先檢查時間再算 HMAC」和「先算 HMAC 再檢查時間」會回傳一模一樣的東西。真正證明了的是「簽章比對這關不可能因為對不上而失敗，所以擋下我的只能是獨立的時間新鮮度檢查」，拿掉多講的那句，論證反而更強。
+- 通則：**寫筆記時把「實測結果」和「推論」分開寫。** 之後遇到打臉的證據，才會清楚該推翻的是哪一句。
