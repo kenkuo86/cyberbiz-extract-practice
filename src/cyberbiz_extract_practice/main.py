@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from email import utils
 import hmac
 import hashlib
@@ -9,12 +9,9 @@ from requests.auth import AuthBase
 username = 'apidemo'
 secret = b'apidemo' # 最前面的 b 的效果是把後面的字串轉成 bytes
 
-# print('===== Get Example =====')
-http_method = 'GET'
+# api url
 url_base = 'https://api.cyberbiz.co'
 url_path = '/v1/orders'
-
-# api url
 url = url_base + url_path
 
 # payload
@@ -32,9 +29,9 @@ payload = 'page=1&per_page=1&offset=0'
 
 class CbzAuth(AuthBase):
     def __init__(self, username, secret):
-        # 只放跟 auth 相關，且整個 session 中不會變的東西
+       # 只放跟 auth 相關，且整個 session 中不會變的東西
        self.username = username
-       self.headers = 'x-date request-line'
+       self.header_params = 'x-date request-line'
        self.secret = secret
 
     def __call__(self, r):
@@ -51,12 +48,10 @@ class CbzAuth(AuthBase):
 
         dig = hmac.new(self.secret, msg=sig_str.encode(), digestmod=hashlib.sha256).digest()
         sig = base64.b64encode(dig).decode()
-        auth = 'hmac username="' + self.username + '", algorithm="hmac-sha256", headers="' + self.headers + '", signature="' + sig + '"'
+        auth = 'hmac username="' + self.username + '", algorithm="hmac-sha256", headers="' + self.header_params + '", signature="' + sig + '"'
 
         r.headers['X-Date'] = x_date
         r.headers['Authorization'] = auth
-        print(r.path_url)
-        print(r)
         return r
     
 # 用 Session 送 request
