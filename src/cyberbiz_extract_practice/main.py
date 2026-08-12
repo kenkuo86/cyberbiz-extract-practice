@@ -107,5 +107,15 @@ def fetch_all_orders_with_yield():
 
 yield_orders = fetch_all_orders_with_yield()
 
-for order in itertools.islice(yield_orders, 10):
-    print(order['id'])
+cost_list = []
+
+for order in itertools.islice(yield_orders, 3):
+    cost_list.append(order['subtotal_price'])
+
+print(cost_list)
+
+# for i, order in enumerate(yield_orders):
+#     if i < 10:
+#         print(i, order[i]['id'])
+#     else:
+#         break
