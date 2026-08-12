@@ -5,6 +5,7 @@ import hashlib
 import base64
 import requests
 from requests.auth import AuthBase
+import itertools
 
 username = 'apidemo'
 secret = b'apidemo' # 最前面的 b 的效果是把後面的字串轉成 bytes
@@ -43,9 +44,10 @@ def fetch_page(url, session, page_num):
 
     # 在 session 物件中送出一個 get request
     r = session.get(url, params=payload) 
-  
+    print(f"{page_num} from fetch_page")
     return r.json()
 
+# Step A: 所有資料塞進一個 list 裡
 def fetch_all_orders():
     # api url
     url_base = 'https://api.cyberbiz.co'
@@ -75,6 +77,35 @@ def fetch_all_orders():
     
     return all_orders
 
-all_orders = fetch_all_orders()
+# all_orders = fetch_all_orders()
 
-print(len(all_orders))
+# print(len(all_orders))
+
+# Step B: 用 yield 逐筆撈出資料
+
+def fetch_all_orders_with_yield():
+    # api url
+    url_base = 'https://api.cyberbiz.co'
+    url_path = '/v1/orders'
+    url = url_base + url_path
+
+    # 用 Session 送 request
+    s = requests.Session() # 建立一個 session 空物件
+    s.auth = CbzAuth(username=username, secret=secret)
+
+    page_num = 1
+
+    while True:
+        data = fetch_page(url, s, page_num)
+
+        if data:
+            print(page_num)
+            yield from data
+            page_num += 1
+        else:
+            return
+
+yield_orders = fetch_all_orders_with_yield()
+
+for order in itertools.islice(yield_orders, 10):
+    print(order['id'])
