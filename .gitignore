@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .env
 /scratch
+/sample_order.json
+/sample_page.json
+/scan.py
