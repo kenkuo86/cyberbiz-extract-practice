@@ -388,3 +388,177 @@ VS Code：`Cmd+Shift+P` → `Python: Select Interpreter` → 選 `.venv/bin/pyth
 - **itertools 特有的坑**：每個條目附一段 "Roughly equivalent to:" 的等價 Python 實作（因為真正的實作是 C，看不到原始碼）。對熟手最精確，對初學者是災難，**可以直接跳過那段**。
 - 模組頁的**第一句話**就是它的定位（itertools 是 "Functions creating iterators for efficient looping"）。頁面上方通常有**摘要表格**，先看表再看條目，比從頭讀到尾有效率。
 - 卡住時的三個動作：(1) 開 REPL 邊讀邊試，拿 `range(100)` 當白老鼠；(2) REPL 裡 `help(某個東西)` 直接印出文件，不用切瀏覽器；(3) 看原始碼。這是 Module 2「文件沒寫就直接印出來看」的延伸。
+
+---
+
+以下為 Module 4 學到的觀念（資料模型與型別）。
+
+**型別標註在 runtime 只是「備註」，不是「規則」**
+- 實測：`Order` 的 `id` 標成 `int`，然後 `o.id = 'hello'`，Python 完全照收，不報錯也不警告。
+- 原因：Python 只是把標註**登記**在 `__annotations__` 裡就沒事了，沒有任何機制會去讀它、拿它比對。它是備註，不是檢查。
+- 所以型別標註**單獨存在時毫無防護力**。它要跟 mypy 成組才有意義。
+
+**mypy 預設不檢查沒有標註的函式內部——標註是在「開權限」**
+- 實測（這輪最有價值的實驗）：在完全沒標註的 `fetch_page` 裡塞一行 `x: int = "我是一個字串"`（不折不扣的型別錯誤），跑 `mypy src/` → **`Success: no issues found`**。
+- mypy 自己說出原因：`By default the bodies of untyped functions are not checked`。
+- 只把 `fetch_page` 的簽章加上標註，同一行程式碼、同一個 mypy → **立刻抓到**。
+- 結論：**沒標註的函式對 mypy 是一塊進不去的黑箱。** 標註不是裝飾也不是文件，是在對 mypy 開權限。CURRICULUM 要求「全專案函式簽章補上標註」的真正理由在這裡。
+- 推論：一個專案如果只標了一半，`mypy` 跑出 `Success` 可能只是因為它根本沒看那一半。
+
+**「靜態」的意思，以及 mypy 為什麼抓得到 `.totl` 卻抓不到 `["totl"]`**
+- 驗收實測：
+  | 寫法 | mypy |
+  |---|---|
+  | `o.subtotal_pirce`（`o` 是 `Order`） | `"Order" has no attribute "subtotal_pirce"; maybe "subtotal_price"?` |
+  | `order['subtotal_pirce']`（`order` 是 `dict`） | `Success`，完全沒吭聲 |
+- 一句話的原因：**`Order` 帶著一份「我有哪些名字」的清單，`dict` 沒有。**
+- 為什麼 dict 不可能有：dict 的本質就是「執行時想放什麼 key 就放什麼 key」，隨時可以 `d['隨便什麼'] = 1`。「合法 key 清單」這個東西對 dict 根本不存在。
+- 更深一層是**時間點**：`Order` 的名單寫死在原始碼裡，用讀的就讀到了；dict 有哪些 key 要等程式跑起來、API 回應了才知道，**那時候 mypy 早就下班了**。
+- **static（靜態）= 不執行程式，只讀原始碼。** mypy 只看得到「寫在原始碼裡的事實」。
+- 所以 `dataclass` 真正在做的事是：**把「這筆資料有哪些欄位」這個知識，從執行時搬到原始碼裡，讓 mypy 讀得到。**
+- 注意：`o.totl` 和 `raw['totl']` **在 runtime 都會炸**（`AttributeError` / `KeyError`），差別不在會不會炸，而在**炸之前有沒有人先攔住你**。
+
+**`Optional`（`str | None`）的完整樣貌**
+- 定義：一個「可能是 None」的值，被當成「一定不是 None」在用。
+- 實測撞到兩次，錯誤訊息不同但病因相同：
+  - `r.method + ' '` → `Unsupported left operand type for + ("None")`
+  - `o.delivery_date.split('-')` → `Item "None" of "str | None" has no attribute "split"`
+- **mypy 不接受口頭保證。** 說「實務上它一定有值」沒用，必須在程式碼裡**寫出**「萬一是 None 會怎樣」。
+- 兩種處理方式：給替代值，或中止。**中止用 `raise`，不是 `return`。**
+- 犯過的錯：寫 `return print('HTTP method required.')`。這根本不是中止——它印一行字，然後把 `print()` 的回傳值 `None` **交還給呼叫者**（requests），程式繼續帶著一個 `None` 往下跑。mypy 抓到了：`Incompatible return value type (got "None", expected "PreparedRequest")`。
+- 順帶學到的寫法：不正常的情況**先擋掉就走人**，正常路徑留在主線上不要被包進 `if` 裡。用 `raise` 之後 `else:` 整塊就消失了。
+- `if r.method:` 和 `if r.method is None:` 不一樣——前者連空字串 `''` 一起擋掉。mypy 要求排除的只有 `None`，多擋的那個是自己沒想清楚就加上去的行為。
+
+**`r.method` 為什麼會是 `str | None`（不是 requests 的特例）**
+- `PreparedRequest` 是一個**分階段組裝**的物件：requests 內部先建空殼，再逐步把 method、url、headers、body 填進去。所以型別定義裡 `method` 從一開始就宣告成「可能還沒填」。
+- 實務上等 `__call__` 被呼叫時 method 早就填好了，所以程式跑幾十次都沒事。但**型別系統不知道「實務上」**，它只讀得到宣告。
+
+**預設值只能用在「這個預設值本身就是對的」的時候**
+- 曾經想過：`r.method` 沒值就預設用 `'GET'`，反正現在全部都是 GET，應該還是會成功。
+- 為什麼是錯的：簽章的內容**必須跟實際送出去的請求一模一樣**。哪天有人加了 POST 而 method 剛好沒填 → 簽的是 `GET /...`、送的是 `POST /...` → 伺服器重算對不上 → **401**。
+- 更糟的是**錯誤現場離原因很遠**：你會去查金鑰、時間戳、編碼、header 順序，查一整個下午，而真正的原因是 method 沒設定。
+- 通則：**填預設值不是因為它對，而是因為在猜的時候，就是在製造這種 bug。**
+
+**`classmethod` 作為「另一種建構子」是 Python 慣例**
+- `Order.from_api(raw)` 和模組層級的 `make_order(raw)` **功能完全一樣**，差別在三件事。
+- **1. 慣例**：同一個型別的各種建構方式，住在那個型別裡面。已經用過的例子就是 `datetime.now()` / `datetime.fromtimestamp()` / `datetime.fromisoformat()`——全是 classmethod，全是「造出一個 datetime 的不同方式」。沒有人寫 `make_datetime_from_timestamp()`。
+- **2. 找得到**：編輯器打 `Order.` 就會列出 `from_api`。不用先知道名字就能發現它。散在模組裡的函式要靠記得名字或翻檔案。
+- **3. `cls` 的真正用途**：`cls` = **「呼叫我的那個類別」**，不是「我被定義在哪個類別」。如果之後有 `class PosOrder(Order)`，`PosOrder.from_api(raw)` 因為 `cls` 收到的是 `PosOrder`，會生出 `PosOrder`；寫死 `return Order(...)` 的話會生出 `Order`——**型別錯了，而且錯得很安靜**。
+- 所以「現在改成寫死 `Order(...)` 會不會壞」的答案是：現在不會，有繼承時才會。但那正是 `cls` 存在的理由。
+
+**`-> "Order"` 為什麼要加引號**
+- 那行簽章被執行的時候，`Order` 這個 class **還在定義中、還不存在**，直接寫 `Order` 會 `NameError`。
+- 包成字串後 Python 不會去解析它，而 mypy 看得懂。
+
+**一行簽章裡三個東西是獨立的**
+- `def from_api(cls, raw: dict) -> "Order":`
+  - **`cls`** — 類別被帶進來的地方。做這件事的是 `@classmethod`，跟任何標註無關。呼叫 `Order.from_api(x)` 時 Python 實際跑的是 `from_api(Order, x)`。
+  - **`raw: dict`** — 參數標註。
+  - **`-> "Order"`** — 回傳標註。**對執行完全沒有影響**：整段刪掉程式一模一樣跑，改成 `-> int` 也照跑、照回傳 `Order`。
+- 曾經誤以為 `-> "Order"` 是「指定要帶進函式的 class」。不是。`cls` 是實際流進去的**貨**，`-> "Order"` 是貼在箱子外面的**標籤**。撕掉標籤箱子裡的東西不變，只是沒人知道裡面裝什麼。
+- 標註的三個讀者：**mypy**（唯一會拿它抓錯的）、讀 code 的人、**編輯器**（`o.` 之後跳出 9 個欄位的自動完成就是靠它）。
+
+**「什麼都是」等於「沒說什麼」——階層頂端的型別不要用**
+- 犯過的錯：把 session 標成 `session: object`，mypy 報 `"object" has no attribute "get"`。
+- `object` 是 Python 型別階層的**最頂端**，所有型別都是它的後代。標成 `object` 等於說「我只知道它存在，其他一無所知」，所以呼叫 `.get()` 就被攔。
+- **這不是 mypy 找碴，是它照你的話做**：你聲明只給它一個泛泛的東西，卻要對它做具體的事。
+- 要標的是**那個變數實際的類別**——看它是怎麼建出來的（`s = requests.Session()` → 型別是 `requests.Session`，去掉括號；括號是「呼叫它、生一個出來」）。
+- 同一個形狀出現在例外上：`raise Exception(...)` 的 `Exception` 是例外階層的最頂端，接的人分不出這是網路問題、認證問題還是資料問題。（Module 5 要處理。）
+
+**方括號是在說「裡面裝什麼」**
+- `Iterator[dict]` = 「一個迭代器，每次交出一個 dict」。`list[str]` = 「裝 str 的 list」。`dict[str, int]` = 「key 是 str、value 是 int 的 dict」。
+- 光寫 `list` 只說了容器種類，加方括號才說了內容物。
+- generator function 的回傳型別標的是「**呼叫它會得到什麼**」——不是 list，是那個「之後可以逐筆走」的東西，所以是 `Iterator[dict]`（`from collections.abc import Iterator`）。
+
+**「邊界」= 資料從哪裡開始被轉換成我們自己要的型別**
+- 任何外部系統（API、資料庫、檔案）給的資料，格式都是**對方定的**。程式裡應該有一條線，資料跨過這條線就變成自己的型別。那條線就是邊界。
+- 判斷標準只有一個：**邊界越靠外，程式裡「mypy 罩不到」的區域就越小。** 所以預設答案是「能多外就多外，資料進門第一時間就轉換」。
+- 目前這個專案的資料流：`API → r.json() → dict → dict → dict → [邊界] → Order`，邊界在最右邊（呼叫端）。raw dict 一路流過 `fetch_page`、generator、到呼叫端，全程 mypy 幫不上忙。
+- **但「越外越好」是預設值，不是鐵律。** 這個 pipeline 的主要工作是**搬運**——把 Cyberbiz 完整資料搬進 BQ，而 `Order` 只認識 9 個欄位。把邊界移到 generator 出口（`Iterator[Order]`）等於在邊界上**燒掉 44 個欄位**，下游再也拿不回來。
+- 所以判斷是：**當一條路的任務就是「原封不動搬東西」時，不要在中間插一個只認識部分欄位的型別。**
+
+**`TypedDict` vs `dataclass`（CURRICULUM 思考題的答案）**
+- 矛盾是：**同時**想要「完整的 53 個欄位」和「mypy 看得住的型別」。`dataclass` 給你後者但犧牲前者。
+- `TypedDict` 就是為這個情境存在的：
+
+  | | `dataclass` | `TypedDict` |
+  |---|---|---|
+  | 執行時是什麼 | **一個新物件** | **還是那個 dict**，一模一樣 |
+  | 取值 | `o.subtotal_price` | `raw["subtotal_price"]` |
+  | mypy 有沒有名單 | 有 | **有** |
+  | 能不能直接 `json.dump` | 不行，要先轉回 dict | 可以，它本來就是 dict |
+
+- **關鍵在第一列：`TypedDict` 在執行時什麼都不做。** 它不建立新物件、不轉換任何東西，純粹是「附一張 key 名單給 mypy 看」。所以 dict 保持完整 53 欄、可以直接 dump 進 BQ，同時 `raw["subtotal_pirce"]` 會被 mypy 抓到。
+- **兩者的邊界：資料只是路過 → `TypedDict`。資料要被程式讀欄位、做判斷、加方法 → `dataclass`。** 不是二選一，是兩件不同的事。
+
+**一筆樣本不足以推論型別（這輪最實用的教訓）**
+- 掃第 1 筆訂單時，`delivery_date` 是 `str`、`payment_name` 是 `str`、`einvoice` 是 `dict`，看起來都很安全。
+- 掃 50 筆之後才發現**三個全都可以是 `null`**。只憑一筆就寫 `delivery_date: str`，程式會在某一筆訂單上炸掉。
+- 所以盤點欄位的正確做法不是「印一筆出來看」，而是**掃一批、對每個 key 統計出現過哪些型別**（`defaultdict(set)` + `type(v).__name__`）。
+- 反過來也要誠實：50 筆裡全是 `None` 的欄位，**只證明「這批樣本裡它是空的」**，不證明它的真實型別。這種欄位要嘛去翻文件，要嘛判定為「這個帳號沒開的功能」直接不收。
+
+**Python 的日常工具（這輪補起來的基本功）**
+- **互動模式**：終端機打 `python` 進 `>>>`，打什麼立刻執行並印出結果，不用寫檔存檔。`exit()` 或 Ctrl-D 離開。**測任何東西的第一選擇。**
+  - 多行輸入：結尾有 `:` 按 Enter 後提示符變 `...`，下一行**要自己按空白鍵縮排**，打完後**再按一次 Enter（空行）**整段才會跑。看起來卡住通常就是漏了最後那個空行。
+  - 上下方向鍵可以叫回上一次打過的內容。
+- **`python -i script.py`**：跑完檔案後不退出，直接進互動模式，檔案裡所有變數都還活著可以摸。只吃 `.py`，不能吃 `.json`。
+- **讀 JSON 檔**：`f = open('x.json', encoding='utf-8')` → `json.load(f)`。
+- **寫 JSON 檔**：`f = open('x.json', 'w', encoding='utf-8')` → `json.dump(物件, f, indent=2, ensure_ascii=False)` → **`f.close()`**（不 close 資料可能還卡在記憶體沒落地，打開檔案會看到空的）。
+  - 差別只有兩個：`open` 多第二個參數 `'w'`，`load`（讀進來）換成 `dump`（寫進去）。
+- **`type(v).__name__`**：`type(v)` 給的是型別物件（印出來 `<class 'int'>`），`.__name__` 給的是乾淨字串 `'int'`。要放進表格、比對、當 set 的元素時用後者。`type(None).__name__` 是 `'NoneType'`。
+- **`defaultdict`**：`counts['apple'] += 1` 對空 dict 會 `KeyError`，因為 `+=` 要先讀舊值。`defaultdict(int)` 在建容器時就講好「找不到就自動生一個」。
+  - **傳的是函式本身（`int`、`list`、`set`），不是呼叫結果（`int()`）。** 差一對括號意思完全不同：前者是「這是製造預設值的方法，你需要時自己叫它」，後者是「這是一個已經做好的 0」。
+  - **這跟 `dataclass` 的 `field(default_factory=list)` 是同一個概念**（本輪沒實際用到 `default_factory`，因為 9 個欄位全是純量）。
+- **`set`**：`add()` 重複加同一個東西只會留一份。語意是「有出現過哪些」，不管幾次、不管順序。
+- **`.items()`**：`for k, v in d.items():` 一次拿到 key 和 value。
+- **`types-requests`**：`requests` 本身沒有型別標註（它比 type hints 早出生），社群另外維護一包**只有簽章、沒有實作**的 `.pyi` 檔案叫 **stub**（概念等同 C 的 header file），打包成 `types-requests`。沒裝的話 mypy 會報 `Library stubs not installed for "requests"`——**那不是你的 code 有問題，是 mypy 看不到 requests 的型別。**
+
+---
+
+以下為 Module 5 學到的觀念（錯誤處理與重試）。
+
+**`requests` 不會因為 HTTP 錯誤而拋例外**
+- 401、429、500 拿回來的**一樣是一個正常的 response 物件**，`r.json()` 照跑，程式一句話都不會說。
+- 這是 requests 的設計立場：HTTP 錯誤代表「伺服器正常回答了你，只是答案是壞消息」，那不是 Python 層級的錯誤。**要不要把壞消息當成錯誤，是你的決定，不是它的。**
+- 由此推出 Module 5 第一層要做的事：**必須自己去看 status code**，沒有人會替你看。
+
+**目前這支程式對失敗完全沒有防護（實測）**
+- 實驗：`per_page` 改成 `500` 觸發伺服器 500，單獨呼叫一次 `fetch_page`。
+- 回傳值是 `{'error': ['系統有誤，請聯絡 CYBERBIZ']}`，型別 `dict`。
+- 這個 dict 流回 generator 之後會發生的事，一步一步是：
+  1. `if data:` → dict 非空 → **為真**（空 dict 才是假）
+  2. `yield from data` → **對 dict 迭代交出的是 key**，所以呼叫端拿到的是字串 `'error'`
+  3. `Order.from_api('error')` → `raw: dict` 這個標註 **runtime 什麼都不做**，不會在進門時擋下來
+  4. 一路跑到 `raw['id']` 才炸成 `TypeError: string indices must be integers`
+- **錯誤要跨過五層才第一次被發現**（`fetch_page` → generator → 呼叫端 → `from_api` → `raw['id']`），而訊息一個字都不會提到 500、`per_page` 或 Cyberbiz。
+- 這就是「沒有偵測層」的代價，形狀跟 Module 4 記過的那條一模一樣：**錯誤現場離原因很遠。**
+
+**例外機制：`raise` 之後發生什麼**
+- `raise` 做兩件事：**立刻中止當前函式**（後面的程式碼一行都不會跑），然後把例外物件**交給呼叫我的人**。
+- 例外沿著**呼叫堆疊**一路往外冒泡，直到有人接住；一路冒到最外層還沒人接，Python 中止整個程式並印出 traceback。
+- **traceback 由下往上讀**：最下面是實際炸掉的那一行，往上每一層是「誰呼叫了它」。
+- 接住用 `try` / `except`，而 **`except` 是用「型別」決定接不接的**——這是整個 Module 5 的樞紐。
+- 這個機制 Module 3 已經見過一次：`for` 迴圈內部就是 `try` 包著 `next()`，`except StopIteration` 之後安靜結束。那個「安靜結束」不是 `for` 的特異功能，就是這套機制。
+
+**例外的兩個「往上」是完全不同的東西（這一輪最重要的修正）**
+- 犯過的錯：以為「例外往外傳的過程中會**經過** `CyberbizError`」。**錯的**，把兩件事疊成了一件：
+
+  | | 「往上」是什麼意思 | 什麼時候發生 |
+  |---|---|---|
+  | **呼叫堆疊**（call stack） | `raw['id']` → `from_api` → 呼叫端 → … | **執行時**，例外真的在移動 |
+  | **類別階層**（class hierarchy） | `AuthError` → `CyberbizError` → `Exception` | **寫在原始碼裡**，靜止不動 |
+
+- 例外物件**只走第一種**。`CyberbizError` 不是路上的一站，**它不是一個地點**。
+- 階層起作用的時機是**某個 `except` 那一行被檢查的瞬間**，Python 問的是一個純粹的型別問題：「這個物件的類別，是不是 `CyberbizError` 或它的後代？」是 → 接住；不是 → 繼續往上冒。
+- 一句話：**階層決定的是「誰接得住誰」，不是「往哪裡走」。**
+
+**共同父類別買到的是什麼**
+- `except CyberbizError:` **一行就接住四個子類別**，不用把四種各寫一次。
+- 而且接得住的**只有**這四種——`requests` 的 `ConnectionError`、Python 的 `KeyError` / `TypeError` 全都接不住，會照樣往外冒。
+- 所以共同父類別同時給了兩件事：**一次接一整類**，以及**劃出「這是我們自己定義的錯」和「別人的錯」的界線**。
+
+**只有繼承自 `BaseException` 的類別才能被 `raise`**
+- 犯過的錯：在 `errors.py` 自己造了一個 `class Error: pass` 當根。直覺（「應該要有一個更廣泛的父類別標記所有錯誤」）是對的，但 **Python 已經有那棵樹了**，不需要自己種。
+- 而且自己種的這棵**會直接壞掉**：沒有繼承任何東西的 class 預設繼承 `object`（LEARNINGS 前面〈什麼都是等於沒說什麼〉那個 `object`），跟例外系統毫無關係。
+- ⬜ **待實測**：REPL 跑 `class Error: pass` → `raise Error()`，看錯誤訊息。
+- ⬜ **待補的觀念**：`BaseException` 和 `Exception` 的差別，以及自訂例外該接哪一個。

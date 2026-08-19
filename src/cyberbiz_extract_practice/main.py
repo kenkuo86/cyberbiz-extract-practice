@@ -46,7 +46,7 @@ class CbzAuth(AuthBase):
 def fetch_page(url: str, session: requests.Session, page_num: int) -> list:
 
     # payload
-    payload = {'page': page_num, 'per_page': 50}
+    payload = {'page': page_num, 'per_page': 500}
 
     # 在 session 物件中送出一個 get request
     r = session.get(url, params=payload) 
@@ -108,15 +108,23 @@ def fetch_all_orders_with_yield() -> Iterator[dict]:
         else:
             return
 
-yield_orders = fetch_all_orders_with_yield()
+ts = requests.Session() # 建立一個 session 空物件
+ts.auth = CbzAuth(username=username, secret=secret)
 
-order_list = []
+test_orders = fetch_page('https://api.cyberbiz.co/v1/orders', ts, 1)
+print(test_orders)
+print(type(test_orders))
 
-for order in itertools.islice(yield_orders, 3):
-    o = Order.from_api(order)
-    order_list.append(o.subtotal_price)
 
-print(order_list)
+# yield_orders = fetch_all_orders_with_yield()
+
+# order_list = []
+
+# for order in itertools.islice(yield_orders, 3):
+#     o = Order.from_api(order)
+#     order_list.append(o.subtotal_price)
+
+# print(order_list)
 
 # for i, order in enumerate(yield_orders):
 #     if i < 1:
