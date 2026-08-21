@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from email import utils
 import hmac
 import hashlib
@@ -8,6 +8,8 @@ from requests.auth import AuthBase
 import itertools
 from collections.abc import Iterator
 from cyberbiz_extract_practice.models import Order
+from cyberbiz_extract_practice.errors import CyberbizError, AuthError, RateLimitError, ServerError, SchemaError, ClientError
+import time
 
 username = 'apidemo'
 secret = b'apidemo' # 最前面的 b 的效果是把後面的字串轉成 bytes
@@ -46,11 +48,33 @@ class CbzAuth(AuthBase):
 def fetch_page(url: str, session: requests.Session, page_num: int) -> list:
 
     # payload
-    payload = {'page': page_num, 'per_page': 500}
+    payload = {'page': page_num, 'per_page': 50}
 
-    # 在 session 物件中送出一個 get request
-    r = session.get(url, params=payload) 
-    return r.json()
+    for attempt in range(5):
+        # 在 session 物件中送出一個 get request
+        try: 
+            r = session.get(url, params=payload) 
+
+            if r.status_code == 200:
+                return r.json() 
+            else:
+                err_msg = f'錯誤發生在 page {page_num}，status code: {r.status_code}，回傳訊息：{r.text}'
+
+                if r.status_code == 401:
+                    raise AuthError('授權錯誤，請檢查權限。'+err_msg)
+                elif r.status_code == 429:
+                    raise RateLimitError('達到速度上限，稍後重試。'+err_msg)
+                elif 400 <= r.status_code < 500:
+                    raise ClientError('用戶端錯誤。'+err_msg)
+                elif r.status_code >= 500:
+                    raise ServerError('伺服器錯誤。'+err_msg)
+                else:
+                    raise CyberbizError('例外狀況，沒有順利拿到回傳資料。'+err_msg)
+        except (RateLimitError, ServerError) as e:
+            time.sleep(2 ** attempt)
+        
+    raise Exception(e.args)
+
 
 # Step A: 所有資料塞進一個 list 裡
 def fetch_all_orders() -> list:
@@ -112,6 +136,8 @@ ts = requests.Session() # 建立一個 session 空物件
 ts.auth = CbzAuth(username=username, secret=secret)
 
 test_orders = fetch_page('https://api.cyberbiz.co/v1/orders', ts, 1)
+# test_orders = fetch_page('https://api.cyberbiz.co/v1/nonsense', ts, 1)
+
 print(test_orders)
 print(type(test_orders))
 

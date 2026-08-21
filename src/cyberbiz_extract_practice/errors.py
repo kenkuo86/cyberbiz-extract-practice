@@ -1,10 +1,7 @@
 # 定義所有錯誤類別
 
-class Error:
+class CyberbizError(Exception):
     pass
-
-class CyberbizError(Error):
-    error: str
 
 class AuthError(CyberbizError):
     pass
@@ -16,4 +13,7 @@ class ServerError(CyberbizError):
     pass
 
 class SchemaError(CyberbizError):
+    pass
+
+class ClientError(CyberbizError):
     pass
